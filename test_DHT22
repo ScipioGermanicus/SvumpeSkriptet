@@ -1,0 +1,39 @@
+// Funktionierendes Testscript für DHT22
+
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
+
+// --- Pinbelegung ---
+#define DHTPIN D2       // Datenpin (z. B. GPIO6 oder D6)
+#define DHTTYPE DHT22  // Sensortyp (DHT22 = AM2302)
+
+// --- Objekt anlegen ---
+DHT dht(DHTPIN, DHTTYPE);
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("Starte DHT22-Test...");
+  dht.begin();
+}
+
+void loop() {
+  delay(2000); // 2 Sekunden warten zwischen Messungen
+
+  float h = dht.readHumidity();
+  float t = dht.readTemperature(); // Celsius
+
+  // Prüfen, ob Messung erfolgreich war
+  if (isnan(h) || isnan(t)) {
+    Serial.println("Fehler beim Lesen des Sensors!");
+    return;
+  }
+
+  Serial.print("Temperatur: ");
+  Serial.print(t);
+  Serial.println(" °C");
+
+  Serial.print("Luftfeuchtigkeit: ");
+  Serial.print(h);
+  Serial.println(" %");
+}
