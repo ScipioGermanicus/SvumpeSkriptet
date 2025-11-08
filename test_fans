@@ -1,0 +1,12 @@
+const int fanPin = D12; // Wähle einen freien digitalen GPIO, z. B. GPIO18
+
+void setup() {
+  pinMode(fanPin, OUTPUT);
+}
+
+void loop() {
+  digitalWrite(fanPin, HIGH); // Lüfter EIN
+  delay(3000);                // 3 Sekunden warten
+  digitalWrite(fanPin, LOW);  // Lüfter AUS
+  delay(13000);               // 17 Sekunden Pause (→ 20s Zyklus)
+}
