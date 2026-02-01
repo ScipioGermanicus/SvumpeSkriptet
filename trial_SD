@@ -1,0 +1,418 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <UniversalTelegramBot.h>
+#include <ArduinoJson.h>
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
+
+#include <SPI.h>
+#include <SD.h>
+#include <time.h>
+
+// --- WLAN & Telegram ---
+#define WIFI_SSID     "Ragnarok"
+#define WIFI_PASS     "CT-5555Fives"
+#define BOTtoken      "8548226615:AAE9JTFvFRG2RZHcNEGMl0QrYyyJjBanr_A"
+#define CHAT_ID       "74517358"
+
+WiFiClientSecure client;
+UniversalTelegramBot bot(BOTtoken, client);
+
+// --- DHT22 ---
+#define DHTPIN  D2
+#define DHTPIN2 D3
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+DHT dht2(DHTPIN2, DHTTYPE);
+
+// --- Lüfter via MOSFET ---
+#define FAN_PIN D12
+
+// --- SD / SPI Pins ---
+// HINWEIS: SCK und MOSI dürfen NICHT identisch sein.
+// Du hast "D6, D7, D7" geschrieben. Falls das ein Tippfehler war, korrigiere SPI_SCK_PIN.
+#define SPI_MISO_PIN D6
+#define SPI_MOSI_PIN D7
+#define SPI_SCK_PIN  D7   // <-- falls falsch: ändern (z.B. D8)
+#define SD_CS_PIN    D5   // <-- ggf. an deine Verdrahtung anpassen (CS/SS)
+
+// Log-Datei
+static const char* LOG_PATH = "/measurements.tsv";
+
+// --- Logging Intervall ---
+const unsigned long LOG_INTERVAL_MS = 5000UL;
+unsigned long lastLog = 0;
+
+// --- Zeitsteuerung (bestehendes Zeug, bleibt drin) ---
+unsigned long lastStatusSend = 0;
+unsigned long lastFanCycle = 0;
+bool fanOn = false;
+
+// --- Phasenstatus ---
+int phase = 1;  // 1 = Kolonisation, 2 = Fruchtung
+
+// --- 24 Stunden in Millisekunden ---
+const unsigned long DAY_MS = 24UL * 60UL * 60UL * 1000UL;
+
+// --- Intervalle (bestehendes Zeug, bleibt drin) ---
+const unsigned long STATUS_INTERVAL = DAY_MS;
+const unsigned long FAN_ON_DURATION = 3000UL;
+const unsigned long FAN_CYCLE_INTERVAL = DAY_MS;
+
+// --- Utility ---
+#define COUNT_OF(x) (sizeof(x)/sizeof((x)[0]))
+const char* pickRandom(const char* const* arr, size_t n) {
+  if (n == 0) return "";
+  long idx = random(0, (long)n);
+  return arr[idx];
+}
+
+// ---------- SD upload helpers (Telegram document) ----------
+File uploadFile;
+
+bool isMoreDataAvailable() {
+  return uploadFile && uploadFile.available();
+}
+
+uint8_t getNextByte() {
+  return uploadFile.read();
+}
+
+// --- WLAN verbinden ---
+void connectWiFi() {
+  Serial.print("Verbindung zu WiFi: ");
+  Serial.println(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ Verbunden. IP-Adresse: " + WiFi.localIP().toString());
+  client.setInsecure();  // Telegram TLS ohne Zertifikat
+}
+
+// --- NTP / Zeitzone (Copenhagen) ---
+void initTime() {
+  // Europe/Copenhagen: CET/CEST (Sommerzeit-Regeln)
+  setenv("TZ", "CET-1CEST,M3.5.0/02,M10.5.0/03", 1);
+  tzset();
+
+  // NTP
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov", "europe.pool.ntp.org");
+
+  // Kurzer Versuch, Zeit zu bekommen (non-blocking light)
+  struct tm timeinfo;
+  int tries = 0;
+  while (!getLocalTime(&timeinfo) && tries < 20) {
+    delay(250);
+    tries++;
+  }
+  if (tries >= 20) {
+    Serial.println("⚠️ NTP time not available yet (will retry implicitly).");
+  } else {
+    Serial.println("✅ Time synchronised via NTP.");
+  }
+}
+
+String isoTimeNow() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    return String("1970-01-01T00:00:00");
+  }
+  char buf[32];
+  // ISO ohne Offset; für Analyse reicht das meist, da TZ gesetzt ist (Local Time)
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &timeinfo);
+  return String(buf);
+}
+
+uint64_t epochMsNow() {
+  time_t nowSec = time(nullptr);
+  if (nowSec < 100000) { // sehr grobe Plausibilitätsprüfung (NTP evtl. noch nicht da)
+    return 0;
+  }
+  // millis() hat Boot-Offset, daher nicht echte ms seit epoch.
+  // Für einen SD-Test reicht epoch in Sekunden + 0ms. (Wenn du willst, machen wir es später "echte" ms.)
+  return (uint64_t)nowSec * 1000ULL;
+}
+
+// --- SD initialisieren + Header sicherstellen ---
+bool initSD() {
+  Serial.println("Initialising SD…");
+  SPI.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN, SD_CS_PIN);
+
+  if (!SD.begin(SD_CS_PIN)) {
+    Serial.println("❌ SD.begin failed.");
+    return false;
+  }
+  Serial.println("✅ SD.begin OK.");
+
+  // Header schreiben, falls Datei neu oder leer
+  bool writeHeader = false;
+  if (!SD.exists(LOG_PATH)) {
+    writeHeader = true;
+  } else {
+    File f = SD.open(LOG_PATH, FILE_READ);
+    if (!f) {
+      writeHeader = true;
+    } else {
+      if (f.size() == 0) writeHeader = true;
+      f.close();
+    }
+  }
+
+  if (writeHeader) {
+    File f = SD.open(LOG_PATH, FILE_WRITE);
+    if (!f) {
+      Serial.println("❌ Could not create log file.");
+      return false;
+    }
+    f.println("iso_time\tepoch_ms\tt1_c\th1_pct\tt2_c\th2_pct");
+    f.close();
+    Serial.println("✅ Log header written.");
+  }
+
+  return true;
+}
+
+// --- Eine Messzeile loggen ---
+void logMeasurementTSV() {
+  float t1 = dht.readTemperature();
+  float h1 = dht.readHumidity();
+  float t2 = dht2.readTemperature();
+  float h2 = dht2.readHumidity();
+
+  String iso = isoTimeNow();
+  uint64_t ems = epochMsNow();
+
+  // Schreibe NaN als "NaN" (TSV-freundlich)
+  auto fmt = [](float v) -> String {
+    if (isnan(v)) return String("NaN");
+    return String(v, 1);
+  };
+
+  String line = iso + "\t" + String((unsigned long long)ems) + "\t"
+              + fmt(t1) + "\t" + fmt(h1) + "\t"
+              + fmt(t2) + "\t" + fmt(h2);
+
+  File f = SD.open(LOG_PATH, FILE_APPEND);
+  if (!f) {
+    Serial.println("❌ Could not open log file for append.");
+    return;
+  }
+  f.println(line);
+  f.close();
+
+  Serial.println("LOG: " + line);
+}
+
+// --- Setup ---
+void setup() {
+  Serial.begin(115200);
+
+  dht.begin();
+  dht2.begin();
+
+  pinMode(FAN_PIN, OUTPUT);
+  digitalWrite(FAN_PIN, LOW);
+
+  randomSeed(millis());
+  connectWiFi();
+  initTime();
+
+  // SD init
+  bool sdOk = initSD();
+  if (!sdOk) {
+    bot.sendMessage(CHAT_ID, "❌ SD init failed. Check wiring/pins/CS.", "");
+  } else {
+    bot.sendMessage(CHAT_ID, "✅ SD init OK. Logging every 5 seconds to measurements.tsv", "");
+  }
+
+  bot.sendMessage(CHAT_ID, "🍄 Bot started. Phase: 1 (Colonisation). Fans deactivated.", "");
+
+  // Start timers
+  lastStatusSend = millis();
+  lastLog = millis();
+}
+
+void manualFanPulse3s() {
+  digitalWrite(FAN_PIN, HIGH);
+  fanOn = true;
+
+  unsigned long start = millis();
+  while (millis() - start < FAN_ON_DURATION) {
+    delay(10);
+  }
+
+  digitalWrite(FAN_PIN, LOW);
+  fanOn = false;
+  lastFanCycle = millis();
+}
+
+// --- Loop ---
+void loop() {
+  // Telegram-Kommandos prüfen
+  int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
+  if (numNewMessages > 0) {
+    handleCommands(numNewMessages);
+  }
+
+  // Logging alle 5 Sekunden
+  if (millis() - lastLog >= LOG_INTERVAL_MS) {
+    logMeasurementTSV();
+    lastLog = millis();
+  }
+
+  // Statusbericht alle 24 Stunden (optional, bleibt wie gehabt)
+  if (millis() - lastStatusSend > STATUS_INTERVAL) {
+    sendStatus();
+    lastStatusSend = millis();
+  }
+
+  // Lüftersteuerung nur in Phase 2: 3 Sekunden alle 24h
+  if (phase == 2) {
+    unsigned long now = millis();
+    if (!fanOn && now - lastFanCycle >= FAN_CYCLE_INTERVAL) {
+      digitalWrite(FAN_PIN, HIGH);
+      fanOn = true;
+      lastFanCycle = now;
+    }
+    else if (fanOn && now - lastFanCycle >= FAN_ON_DURATION) {
+      digitalWrite(FAN_PIN, LOW);
+      fanOn = false;
+      lastFanCycle = now;
+    }
+  } else {
+    digitalWrite(FAN_PIN, LOW);
+  }
+}
+
+// --- Telegram-Kommandos verarbeiten ---
+void handleCommands(int numNewMessages) {
+  for (int i = 0; i < numNewMessages; i++) {
+    String chat_id = bot.messages[i].chat_id;
+    String text    = bot.messages[i].text;
+
+    if (text == "/phase1") {
+      phase = 1;
+      fanOn = false;
+      digitalWrite(FAN_PIN, LOW);
+      bot.sendMessage(chat_id, "🌱 Phase set to 1: colonisation.\nFans deactivated.", "");
+    }
+    else if (text == "/phase2") {
+      phase = 2;
+      fanOn = false;
+      digitalWrite(FAN_PIN, LOW);
+      bot.sendMessage(chat_id, "🍄 Phase set to 2: fruiting.\nFans will run 3 s every 24 h.", "");
+      lastFanCycle = millis();
+    }
+    else if (text == "/fan") {
+      bot.sendMessage(chat_id, "🌀 Manual ventilation: running fans for 3 seconds.", "");
+      manualFanPulse3s();
+      bot.sendMessage(chat_id, "✅ Done. Fans are OFF again.", "");
+    }
+    else if (text == "/getlog") {
+      // Datei als Dokument senden
+      if (!SD.exists(LOG_PATH)) {
+        bot.sendMessage(chat_id, "❌ Log file not found on SD.", "");
+        continue;
+      }
+
+      uploadFile = SD.open(LOG_PATH, FILE_READ);
+      if (!uploadFile) {
+        bot.sendMessage(chat_id, "❌ Could not open log file for sending.", "");
+        continue;
+      }
+
+      // Dateiname, wie er in Telegram angezeigt werden soll
+      String filename = "measurements.tsv";
+
+      // Content-Type: text/plain ist am kompatibelsten
+      bool ok = bot.sendDocument(
+        chat_id,
+        "text/plain",
+        filename,
+        uploadFile.size(),
+        isMoreDataAvailable,
+        getNextByte,
+        nullptr,
+        nullptr
+      );
+
+      uploadFile.close();
+
+      if (ok) {
+        bot.sendMessage(chat_id, "✅ Sent measurements.tsv", "");
+      } else {
+        bot.sendMessage(chat_id, "❌ Failed to send file (maybe too large or connection issue).", "");
+      }
+    }
+    else if (text == "/status") {
+      sendStatus();
+    }
+    else {
+      bot.sendMessage(chat_id,
+        "📋 Available commands:\n"
+        "/status – View status\n"
+        "/getlog – Send measurements.tsv\n"
+        "/phase1 – Set phase: colonisation (fans deactivated)\n"
+        "/phase2 – Set phase: fruiting (fans 3 s / 24 h)\n"
+        "/fan – Run fans manually for 3 seconds",
+        "");
+    }
+  }
+}
+
+// --- Formatierte Uptime als String ---
+String formatUptime(unsigned long ms) {
+  unsigned long sec = ms / 1000;
+  int days = sec / 86400;  sec %= 86400;
+  int hours = sec / 3600;  sec %= 3600;
+  int mins = sec / 60;     sec %= 60;
+
+  char buffer[64];
+  if (days > 0)
+    snprintf(buffer, sizeof(buffer), "%dd %02dh %02dm %02ds", days, hours, mins, sec);
+  else
+    snprintf(buffer, sizeof(buffer), "%02dh %02dm %02ds", hours, mins, sec);
+
+  return String(buffer);
+}
+
+// --- Statusbericht senden ---
+void sendStatus() {
+  float t1 = dht.readTemperature();
+  float h1 = dht.readHumidity();
+  float t2 = dht2.readTemperature();
+  float h2 = dht2.readHumidity();
+
+  const char* introOptions[] = {
+    "*I don't know you, and I don't care to know you!*\n",
+    "*Stop right there criminal scum, you violated the law!*\n",
+    "*Then pay with your blood!*\n",
+    "*Saw a mudcrab the other day. Horrible little creatures.*\n",
+    "*You have my ear citizen.*\n",
+    "*Nine o'clock on the watch and all's well!*\n"
+  };
+
+  const char* outroOptions[] = {
+    "\nBye!",
+    "\nStop talkin'!",
+    "\nStay safe, citizen.",
+    "\nMay Talos guide you.",
+    "\nBy the Nine Divine!"
+  };
+
+  String msg = pickRandom(introOptions, COUNT_OF(introOptions));
+  msg += "🕒 Time: " + isoTimeNow() + "\n";
+  msg += "🌡 Temp (DHT1): " + (isnan(t1) ? String("NaN") : String(t1, 1)) + " °C\n";
+  msg += "💧 Hum  (DHT1): " + (isnan(h1) ? String("NaN") : String(h1, 1)) + " %\n";
+  msg += "🌡 Temp (DHT2): " + (isnan(t2) ? String("NaN") : String(t2, 1)) + " °C\n";
+  msg += "💧 Hum  (DHT2): " + (isnan(h2) ? String("NaN") : String(h2, 1)) + " %\n";
+  msg += "🕒 Up-time: " + formatUptime(millis()) + "\n";
+  msg += "🌱 Phase: " + String(phase) + ((phase == 1) ? " (Colonisation)" : " (Fruiting)") + "\n";
+  msg += "🌀 Ventilation: " + String((phase == 2 && fanOn) ? "ON" : "OFF");
+  msg += pickRandom(outroOptions, COUNT_OF(outroOptions));
+
+  bot.sendMessage(CHAT_ID, msg, "Markdown");
+}
