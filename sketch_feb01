@@ -131,37 +131,41 @@ void loop() {
 void handleCommands(int numNewMessages) {
   for (int i = 0; i < numNewMessages; i++) {
     String chat_id = bot.messages[i].chat_id;
-    String text = bot.messages[i].text;
+    String text    = bot.messages[i].text;
 
     if (text == "/phase1") {
       phase = 1;
+      fanOn = false;
+      digitalWrite(FAN_PIN, LOW); // sofort aus
       bot.sendMessage(chat_id, "🌱 Phase set to 1: colonisation.\nFans deactivated.", "");
-    } 
+    }
     else if (text == "/phase2") {
       phase = 2;
+      fanOn = false;
+      digitalWrite(FAN_PIN, LOW); // definierter Startzustand
       bot.sendMessage(chat_id, "🍄 Phase set to 2: fruiting.\nFans will run 3 s every 24 h.", "");
-      lastFanCycle = millis();  // countdown für die nächste 24h-Periode starten
-    } 
+      lastFanCycle = millis();  // 24h Countdown starten
+    }
     else if (text == "/status") {
       sendStatus();
-    } 
-    else {
-            bot.sendMessage(chat_id,
-             "📋 Available commands:\n"
-             "/phase1 – Set phase: colonisation (fans deactivated)\n"
-              "/phase2 – Set phase: fruiting (fans 3 s / 24 h)\n"
-             "/status – View status\n"
-             "/fan – Run fans manually for 3 seconds", "");
-
     }
     else if (text == "/fan") {
-       bot.sendMessage(chat_id, "🌀 Manual ventilation: running fans for 3 seconds.", "");
-        manualFanPulse3s();
-        bot.sendMessage(chat_id, "✅ Done. Fans are OFF again.", "");
-}
-
+      bot.sendMessage(chat_id, "🌀 Manual ventilation: running fans for 3 seconds.", "");
+      manualFanPulse3s();
+      bot.sendMessage(chat_id, "✅ Done. Fans are OFF again.", "");
+    }
+    else {
+      bot.sendMessage(chat_id,
+        "📋 Available commands:\n"
+        "/phase1 – Set phase: colonisation (fans deactivated)\n"
+        "/phase2 – Set phase: fruiting (fans 3 s / 24 h)\n"
+        "/status – View status\n"
+        "/fan – Run fans manually for 3 seconds",
+        "");
+    }
   }
 }
+
 
 // --- Formatierte Uptime als String ---
 String formatUptime(unsigned long ms) {
