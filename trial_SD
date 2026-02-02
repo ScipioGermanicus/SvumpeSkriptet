@@ -33,8 +33,8 @@ DHT dht2(DHTPIN2, DHTTYPE);
 // Hinweis: SCK und MOSI dürfen NICHT identisch sein.
 #define SPI_MISO_PIN D6
 #define SPI_MOSI_PIN D7
-#define SPI_SCK_PIN  D7   // falls falsch: ändern!
-#define SD_CS_PIN    D5   // ggf. an deine Verdrahtung anpassen
+#define SPI_SCK_PIN  D8   // falls falsch: ändern!
+#define SD_CS_PIN    D9   // ggf. an deine Verdrahtung anpassen
 
 // --- Logging ---
 static const char* LOG_PATH = "/measurements.tsv";
