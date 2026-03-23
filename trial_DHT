@@ -8,9 +8,6 @@
 
 // --- WLAN & Telegram ---
 #define WIFI_SSID     "Ragnarok"
-#define WIFI_PASS     "CT-5555Fives"
-#define BOTtoken      "8548226615:AAE9JTFvFRG2RZHcNEGMl0QrYyyJjBanr_A"
-#define CHAT_ID       "74517358"
 
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
