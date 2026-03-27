@@ -141,7 +141,7 @@ void handleCommands(int numNewMessages) {
     }
     else if (text == "/phase2") {
       phase = 2;
-      fanOn = false;
+      fanOn = true;
       digitalWrite(FAN_PIN, LOW); // definierter Startzustand
       bot.sendMessage(chat_id, "🍄 Phase set to 2: fruiting.\nFans will run 3 s every 24 h.", "");
       lastFanCycle = millis();  // 24h Countdown starten
