@@ -19,10 +19,6 @@
 
 // ======= KONFIGURATION =======
 #define WIFI_SSID     "Ragnarok"
-#define WIFI_PASS     "CT-5555Fives"
-
-#define BOTtoken      "8548226615:AAE9JTFvFRG2RZHcNEGMl0QrYyyJjBanr_A"  // von @BotFather
-#define CHAT_ID       "74517358"  // eigene Chat-ID (siehe Hinweise unten)
 
 // DHT22 an GPIO 4 (Beispiel, echten GPIO verwenden)
 #define DHTPIN        D2
