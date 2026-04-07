@@ -17,7 +17,7 @@ WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
 
 // --- DHT22 ---
-#define DHTPIN  D2
+#define DHTPIN  D3
 #define DHTPIN2 D7
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
