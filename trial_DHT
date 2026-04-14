@@ -35,7 +35,7 @@ const unsigned long DAY_MS = 24UL * 60UL * 60UL * 1000UL;
 
 // --- Intervalle ---
 const unsigned long STATUS_INTERVAL = DAY_MS;           // Status alle 24h
-const unsigned long FAN_ON_DURATION = 3000UL;           // 3 Sekunden an
+const unsigned long FAN_ON_DURATION = 5000UL;           // 3 Sekunden an
 const unsigned long FAN_CYCLE_INTERVAL = DAY_MS;        // Lüfter alle 24h
 
 // --- Utility ---
