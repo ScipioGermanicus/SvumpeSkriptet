@@ -24,7 +24,7 @@ DHT dht(DHTPIN, DHTTYPE);
 DHT dht2(DHTPIN2, DHTTYPE);
 
 // --- Lüfter via MOSFET ---
-#define FAN_PIN D12
+#define FAN_PIN D10
 
 // --- SD / SPI Pins ---
 // Hinweis: SCK und MOSI dürfen NICHT identisch sein.
