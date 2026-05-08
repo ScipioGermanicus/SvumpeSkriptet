@@ -6,7 +6,7 @@ void setup() {
 
 void loop() {
   digitalWrite(fanPin, HIGH); // Lüfter EIN
-  delay(3000);                // 3 Sekunden warten
+  delay(6000);                // 6 Sekunden warten
   digitalWrite(fanPin, LOW);  // Lüfter AUS
   delay(13000);               // 17 Sekunden Pause (→ 20s Zyklus)
 }
