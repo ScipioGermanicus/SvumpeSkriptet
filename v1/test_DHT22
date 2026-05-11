@@ -5,8 +5,8 @@
 #include <DHT_U.h>
 
 // --- Pinbelegung ---
-#define DHTPIN D2       // Datenpin (z. B. GPIO6 oder D6)
-#define DHTTYPE DHT22  // Sensortyp (DHT22 = AM2302)
+#define DHTPIN D6       //
+#define DHTTYPE DHT22  //
 
 // --- Objekt anlegen ---
 DHT dht(DHTPIN, DHTTYPE);
