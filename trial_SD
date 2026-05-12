@@ -18,7 +18,7 @@ UniversalTelegramBot bot(BOTtoken, client);
 
 // --- DHT22 ---
 #define DHTPIN  D1
-#define DHTPIN2 D7
+#define DHTPIN2 D2
 #define DHTTYPE DHT22
 DHT dht(DHTPIN, DHTTYPE);
 DHT dht2(DHTPIN2, DHTTYPE);
